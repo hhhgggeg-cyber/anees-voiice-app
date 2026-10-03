@@ -1,16 +1,22 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ATHKAR, LECTURES, AZAN_URL, CITIES, PRAYERS, ayahAudio, normalizeArabic, parseRepeatCount, type Track,
+  ATHKAR, AZAN_URL, CITIES, PRAYERS, ayahAudio, normalizeArabic, parseRepeatCount, type Track,
 } from "@/lib/anees-data";
+import FATWA_JSON from "@/lib/fatwa-playlists.json";
+import { CLIP_DEFS, announcementKeys, beep, loadAllClips } from "@/lib/voice-clips";
+import { QiblaCompass } from "@/components/QiblaCompass";
+import { RecordClips } from "@/components/RecordClips";
+
+const FATWA = FATWA_JSON as { id: string; title: string; keywords: string[]; files: string[] }[];
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: "أنيس – رفيقك الإسلامي الصوتي" },
-      { name: "description", content: "أنيس: تطبيق صوتي بالكامل لكبار السن — القرآن بصوت العجمي، الأذكار بصوت العفاسي، دروس ابن عثيمين ومواقيت الصلاة." },
+      { name: "description", content: "أنيس: تطبيق صوتي بالكامل لكبار السن — القرآن بصوت العجمي، الأذكار بصوت العفاسي، راديو فتاوى ابن عثيمين، ومواقيت الصلاة والقبلة بالصوت." },
       { property: "og:title", content: "أنيس – رفيقك الإسلامي الصوتي" },
-      { property: "og:description", content: "قرآن، أذكار، دروس ومواقيت صلاة — بالصوت فقط." },
+      { property: "og:description", content: "قرآن، أذكار، راديو فتاوى، ومواقيت صلاة وقبلة — بالصوت فقط." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
     ],
@@ -18,7 +24,7 @@ export const Route = createFileRoute("/")({
   component: Anees,
 });
 
-type Section = "home" | "quran" | "athkar" | "lectures" | "prayer";
+type Section = "home" | "quran" | "athkar" | "radio" | "prayer" | "record";
 type SurahMeta = { number: number; name: string; numberOfAyahs: number };
 type Ayah = { numberInSurah: number; text: string };
 type Timings = Record<string, string>;

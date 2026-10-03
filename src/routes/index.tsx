@@ -54,6 +54,14 @@ function Anees() {
   const [qibla, setQibla] = useState<number | null>(null);
   const [azanAlert, setAzanAlert] = useState<string | null>(null);
   const lastAzan = useRef("");
+  const [notice, setNotice] = useState("");
+
+  // radio + sequences + recorded clips
+  const [radio, setRadio] = useState<{ ch: number; i: number } | null>(null);
+  const radioRef = useRef<{ ch: number; i: number } | null>(null);
+  const seqRef = useRef<string[]>([]);
+  const [clips, setClips] = useState<Record<string, string>>({});
+  const endedRef = useRef<() => void>(() => {});
 
   const recRef = useRef<SR>(null);
   const handleRef = useRef<(t: string) => void>(() => {});
@@ -94,10 +102,9 @@ function Anees() {
     a.onpause = () => setPlaying(false);
     a.onended = () => {
       setPlaying(false);
-      if (quranMode.current && advanceQuran()) return;
-      quranMode.current = false;
-      startListening();
+      endedRef.current();
     };
+    a.onerror = () => { if (radioRef.current) endedRef.current(); };
     return () => { a.pause(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -109,11 +116,88 @@ function Anees() {
     void a.play().catch(() => setPlaying(false));
   };
 
-  const playTrack = (t: Track) => {
+  const resetModes = () => {
     quranMode.current = false;
+    radioRef.current = null;
+    setRadio(null);
+    seqRef.current = [];
+    setTrackId(null);
+  };
+
+  const playTrack = (t: Track) => {
+    resetModes();
     setTrackId(t.id);
     setNowTitle(`${t.title} — ${t.subtitle}`);
     playUrl(t.url);
+  };
+
+  // ---------- fatwa radio (continuous playlist) ----------
+  const playRadio = (ch: number, i: number) => {
+    const c = FATWA[ch];
+    if (!c) return;
+    resetModes();
+    const idx = i % c.files.length;
+    radioRef.current = { ch, i: idx };
+    setRadio({ ch, i: idx });
+    setSection("radio");
+    setNowTitle(`📻 ${c.title} — ابْنُ عُثَيْمِين`);
+    playUrl(c.files[idx]!);
+  };
+
+  // ---------- recorded announcement clips ----------
+  const refreshClips = useCallback(() => { void loadAllClips().then(setClips).catch(() => {}); }, []);
+  useEffect(() => { refreshClips(); }, [refreshClips]);
+  const clipsRef = useRef(clips);
+  clipsRef.current = clips;
+
+  const playSequence = (urls: string[], title: string) => {
+    resetModes();
+    seqRef.current = urls.slice(1);
+    setNowTitle(title);
+    playUrl(urls[0]!);
+  };
+  const playClip = useCallback((key: string) => {
+    const u = clipsRef.current[key];
+    if (!u) return false;
+    const a = audioRef.current!;
+    quranMode.current = false; radioRef.current = null; seqRef.current = [];
+    a.src = u; void a.play().catch(() => {});
+    return true;
+  }, []);
+
+  const announceNext = () => {
+    if (!timings) { setNotice("جَارٍ تَحْمِيلُ المَوَاقِيتِ..."); return; }
+    const now = new Date();
+    const cur = now.getHours() * 60 + now.getMinutes();
+    const list = PRAYERS.map((p) => {
+      const [h, m] = (timings[p.key] ?? "00:00").slice(0, 5).split(":").map(Number);
+      return { p, t: (h ?? 0) * 60 + (m ?? 0) };
+    });
+    let next = list.find((x) => x.t > cur);
+    let left: number;
+    if (next) left = next.t - cur; else { next = list[0]!; left = next.t + 1440 - cur; }
+    const hh = Math.floor(left / 60), mm = left % 60;
+    setNotice(`الصَّلَاةُ القَادِمَةُ: ${next.p.name} — بَاقٍ ${hh ? `${hh} سَاعَة وَ` : ""}${mm} دَقِيقَة`);
+    const keys = announcementKeys(next.p.key, left);
+    const urls = keys.map((k) => clipsRef.current[k]);
+    if (urls.every(Boolean)) {
+      playSequence(urls as string[], `🔊 ${next.p.name}`);
+    } else {
+      // Fallback (no recordings yet): chimes — count = prayer order (1 Fajr … 5 Isha), then azan intro.
+      const n = PRAYERS.findIndex((p) => p.key === next!.p.key) + 1;
+      for (let k = 0; k < n; k++) setTimeout(() => beep(988, 350, 0.5), k * 600);
+      setNotice((s) => `${s}\n(لَمْ تُسَجَّلِ الإِعْلَانَاتُ الصَّوْتِيَّةُ بَعْدُ — اضْغَطْ «تَسْجِيلُ الإِعْلَانَاتِ»)`);
+      setTimeout(startListening, n * 600 + 500);
+    }
+  };
+
+  endedRef.current = () => {
+    if (quranMode.current && advanceQuran()) return;
+    quranMode.current = false;
+    if (seqRef.current.length) { const u = seqRef.current.shift()!; playUrl(u); return; }
+    const r = radioRef.current;
+    if (r) { playRadio(r.ch, r.i + 1); return; }
+    startListening();
   };
 
   // ---------- quran ----------
@@ -128,6 +212,7 @@ function Anees() {
   repeatRef.current = repeat;
 
   const playAyah = (s: number, ayah: number) => {
+    radioRef.current = null; setRadio(null); seqRef.current = [];
     setActiveAyah(ayah);
     playUrl(ayah === 0 ? ayahAudio(1, 1) : ayahAudio(s, ayah));
     if (ayah > 0) document.getElementById(`ayah-${ayah}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -212,7 +297,7 @@ function Anees() {
         if (timings[p.key]?.slice(0, 5) === hm && lastAzan.current !== key) {
           lastAzan.current = key;
           setAzanAlert(p.name);
-          quranMode.current = false;
+          resetModes();
           setNowTitle(`أَذَانُ ${p.name}`);
           playUrl(AZAN_URL);
         }
@@ -237,12 +322,14 @@ function Anees() {
     if (t.includes("مساء") || t.includes("المسا")) { setSection("athkar"); return playTrack(ATHKAR[1]!); }
     if (t.includes("نوم")) { setSection("athkar"); return playTrack(ATHKAR[2]!); }
     if (t.includes("اذكار") || t.includes("ورد") || t.includes("اطراف")) { setSection("athkar"); return playTrack(ATHKAR[3]!); }
-    if (t.includes("محاضر") || t.includes("درس")) {
-      setSection("lectures");
-      const l = LECTURES.find((x) => x.keywords.some((k) => t.includes(k))) ?? LECTURES[0]!;
-      return playTrack(l);
+    if (t.includes("راديو") || t.includes("فتاوي") || t.includes("فتوي") || t.includes("محاضر") || t.includes("درس")) {
+      const idx = FATWA.findIndex((c) => c.keywords.some((k) => t.includes(k)));
+      return playRadio(idx >= 0 ? idx : 0, 0);
     }
-    if (t.includes("مواقيت") || t.includes("الصلاه") || t.includes("صلاه") || t.includes("قبله")) { setSection("prayer"); return; }
+    if (t.includes("التاليه") || t.includes("بعدها")) { if (radioRef.current) playRadio(radioRef.current.ch, radioRef.current.i + 1); return; }
+    if (t.includes("قبله")) { setSection("prayer"); playClip("qibla_turn"); return; }
+    if (t.includes("مواقيت") || t.includes("الصلاه") || t.includes("صلاه") || t.includes("القادمه")) { setSection("prayer"); announceNext(); return; }
+    if (t.includes("تسجيل")) { setSection("record"); return; }
     const s = findSurah(t);
     if (s) { void openSurah(s); return; }
     if (t.includes("قران") || t.includes("سوره")) {
@@ -305,10 +392,14 @@ function Anees() {
           {[
             { s: "quran" as const, t: "القُرْآنُ الكَرِيمُ", d: "قُلْ: «سُورَةُ يس»" },
             { s: "athkar" as const, t: "الأَذْكَارُ", d: "قُلْ: «أَذْكَارُ الصَّبَاحِ»" },
-            { s: "lectures" as const, t: "المُحَاضَرَاتُ", d: "قُلْ: «دَرْسُ الصَّلَاةِ»" },
-            { s: "prayer" as const, t: "مَوَاقِيتُ الصَّلَاةِ", d: "قُلْ: «مَوَاقِيتُ الصَّلَاةِ»" },
+            { s: "radio" as const, t: "رَادِيُو الفَتَاوَى", d: "قُلْ: «رَادِيُو الفَتَاوَى»" },
+            { s: "prayer" as const, t: "مَوَاقِيتُ الصَّلَاةِ وَالقِبْلَةُ", d: "قُلْ: «مَوَاقِيتُ الصَّلَاةِ»" },
           ].map((c) => (
-            <button key={c.s} onClick={() => setSection(c.s)} className="rounded-3xl border-4 border-gold bg-card p-8 text-right text-card-foreground">
+            <button
+              key={c.s}
+              onClick={() => (c.s === "radio" ? playRadio(radio?.ch ?? 0, radio?.i ?? 0) : c.s === "prayer" ? (setSection("prayer"), announceNext()) : setSection(c.s))}
+              className="rounded-3xl border-4 border-gold bg-card p-8 text-right text-card-foreground"
+            >
               <h2 className="text-4xl font-bold text-primary">{c.t}</h2>
               <p className="mt-3 text-2xl text-muted-foreground">{c.d}</p>
             </button>
@@ -368,9 +459,9 @@ function Anees() {
         </section>
       )}
 
-      {(section === "athkar" || section === "lectures") && (
+      {section === "athkar" && (
         <section className="grid gap-6 sm:grid-cols-2">
-          {(section === "athkar" ? ATHKAR : LECTURES).map((t) => {
+          {ATHKAR.map((t) => {
             const active = trackId === t.id;
             return (
               <button
@@ -387,8 +478,43 @@ function Anees() {
         </section>
       )}
 
+      {section === "radio" && (
+        <section className="flex flex-col gap-6">
+          <div className="rounded-3xl border-4 border-gold bg-card p-6 text-center text-card-foreground">
+            <h2 className="text-5xl font-bold text-primary">📻 رَادِيُو الفَتَاوَى</h2>
+            <p className="mt-2 text-2xl text-muted-foreground">فَتَاوَى الشَّيْخِ مُحَمَّدِ بْنِ صَالِحٍ العُثَيْمِين — تَعْمَلُ تِلْقَائِيًّا بِلَا تَوَقُّفٍ</p>
+            {radio && (
+              <div className="mt-5 flex flex-wrap items-center justify-center gap-4">
+                <p className="text-3xl font-bold">{FATWA[radio.ch]!.title} — فَتْوَى {(radio.i + 1).toLocaleString("ar-EG")}</p>
+                <button onClick={() => playRadio(radio.ch, radio.i + 1)} className="rounded-2xl bg-gold px-6 py-3 text-2xl font-bold text-gold-foreground">⏭ التَّالِيَةُ</button>
+              </div>
+            )}
+          </div>
+          <div className="grid gap-6 sm:grid-cols-2">
+            {FATWA.map((c, idx) => {
+              const active = radio?.ch === idx;
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => (active && playing ? audioRef.current?.pause() : active ? audioRef.current?.play() : playRadio(idx, 0))}
+                  className={`rounded-3xl border-4 border-gold p-8 text-right ${active ? "bg-gold text-gold-foreground" : "bg-card text-card-foreground"}`}
+                >
+                  <h3 className="text-4xl font-bold">{c.title}</h3>
+                  <p className="mt-2 text-2xl opacity-80">{c.files.length.toLocaleString("ar-EG")} فَتْوَى</p>
+                  <p className="mt-4 text-3xl font-bold">{active && playing ? "⏸ إِيقَافٌ" : "▶ اسْتِمَاعٌ"}</p>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       {section === "prayer" && (
         <section className="flex flex-col gap-6">
+          <button onClick={announceNext} className="rounded-3xl bg-gold p-8 text-4xl font-bold text-gold-foreground">
+            🔊 اسْمَعِ الصَّلَاةَ القَادِمَةَ
+          </button>
+          {notice && <p role="status" className="rounded-2xl bg-card p-5 text-2xl text-card-foreground">{notice}</p>}
           <select value={cityId} onChange={(e) => setCityId(e.target.value)} className="self-start rounded-2xl bg-card px-5 py-4 text-2xl text-card-foreground">
             {CITIES.map((c) => <option key={c.id} value={c.id}>{c.name} — {c.country}</option>)}
           </select>
@@ -400,23 +526,19 @@ function Anees() {
               </div>
             ))}
           </div>
-          <div className="flex items-center gap-6 rounded-3xl bg-card p-6 text-card-foreground">
-            <div className="relative h-32 w-32 rounded-full border-4 border-gold">
-              <div className="absolute inset-0 flex justify-center" style={{ transform: `rotate(${qibla ?? 0}deg)` }}>
-                <div className="mt-2 h-14 w-2 rounded-full bg-primary" />
-              </div>
-              <span className="absolute -top-1 left-1/2 -translate-x-1/2 text-sm font-bold">ش</span>
-            </div>
-            <div>
-              <p className="text-3xl font-bold text-primary">اتِّجَاهُ القِبْلَةِ</p>
-              <p className="text-2xl">{qibla ? `${qibla.toFixed(0)}° مِنَ الشَّمَالِ — ${city.name}` : "..."}</p>
-            </div>
+          <QiblaCompass qibla={qibla} cityName={city.name} playClip={playClip} />
+          <div className="flex flex-wrap gap-4">
+            <button onClick={() => { resetModes(); setNowTitle("الأَذَانُ"); playUrl(AZAN_URL); }} className="rounded-2xl border-4 border-gold px-6 py-4 text-2xl">
+              ▶ اسْتِمَاعٌ لِلأَذَانِ
+            </button>
+            <button onClick={() => setSection("record")} className="rounded-2xl border-4 border-gold px-6 py-4 text-2xl">
+              ● تَسْجِيلُ الإِعْلَانَاتِ ({Object.keys(clips).length}/{CLIP_DEFS.length})
+            </button>
           </div>
-          <button onClick={() => { quranMode.current = false; setNowTitle("الأَذَانُ"); playUrl(AZAN_URL); }} className="self-start rounded-2xl border-4 border-gold px-6 py-4 text-2xl">
-            ▶ اسْتِمَاعٌ لِلأَذَانِ
-          </button>
         </section>
       )}
+
+      {section === "record" && <RecordClips clips={clips} onSaved={refreshClips} />}
 
       {nowTitle && (
         <footer className="fixed inset-x-0 bottom-0 border-t-4 border-gold bg-secondary p-4">

@@ -233,13 +233,13 @@ function Anees() {
       return;
     }
     if (t.includes("توقف") || t.includes("قف") || t.includes("اسكت")) { audioRef.current?.pause(); return; }
-    if (t.includes("صباح")) { setSection("athkar"); return playTrack(ATHKAR[0]); }
-    if (t.includes("مساء") || t.includes("المسا")) { setSection("athkar"); return playTrack(ATHKAR[1]); }
-    if (t.includes("نوم")) { setSection("athkar"); return playTrack(ATHKAR[2]); }
-    if (t.includes("اذكار") || t.includes("ورد") || t.includes("اطراف")) { setSection("athkar"); return playTrack(ATHKAR[3]); }
+    if (t.includes("صباح")) { setSection("athkar"); return playTrack(ATHKAR[0]!); }
+    if (t.includes("مساء") || t.includes("المسا")) { setSection("athkar"); return playTrack(ATHKAR[1]!); }
+    if (t.includes("نوم")) { setSection("athkar"); return playTrack(ATHKAR[2]!); }
+    if (t.includes("اذكار") || t.includes("ورد") || t.includes("اطراف")) { setSection("athkar"); return playTrack(ATHKAR[3]!); }
     if (t.includes("محاضر") || t.includes("درس")) {
       setSection("lectures");
-      const l = LECTURES.find((x) => x.keywords.some((k) => t.includes(k))) ?? LECTURES[0];
+      const l = LECTURES.find((x) => x.keywords.some((k) => t.includes(k))) ?? LECTURES[0]!;
       return playTrack(l);
     }
     if (t.includes("مواقيت") || t.includes("الصلاه") || t.includes("صلاه") || t.includes("قبله")) { setSection("prayer"); return; }

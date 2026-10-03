@@ -156,7 +156,7 @@ function Anees() {
     const j = await fetch(`https://api.alquran.cloud/v1/surah/${meta.number}/quran-uthmani`).then((r) => r.json());
     let list: Ayah[] = j.data.ayahs;
     if (meta.number !== 1 && meta.number !== 9 && list[0]) {
-      list = [{ ...list[0], text: list[0].text.replace(/^بِسْمِ\s?ٱللَّهِ\s?ٱلرَّحْمَٰنِ\s?ٱلرَّحِيمِ\s?/, "") }, ...list.slice(1)];
+      list = [{ ...list[0], text: list[0].text.startsWith("بِسْمِ") ? list[0].text.split(" ").slice(4).join(" ") : list[0].text }, ...list.slice(1)];
     }
     setAyahs(list);
     if (autoplay) {
